@@ -59,10 +59,10 @@ type Backend[
 	WithdrawalT Withdrawal[WithdrawalT],
 	WithdrawalCredentialsT WithdrawalCredentials,
 ] struct {
-	cs common.ChainSpec
-	as AvailabilityStoreT
-	bs KVStoreT
-	ds DepositStoreT
+	chainSpec         common.ChainSpec
+	availabilityStore AvailabilityStoreT
+	stateStore        KVStoreT
+	depositStore      DepositStoreT
 }
 
 func NewBackend[
@@ -93,10 +93,10 @@ func NewBackend[
 	WithdrawalT Withdrawal[WithdrawalT],
 	WithdrawalCredentialsT WithdrawalCredentials,
 ](
-	cs common.ChainSpec,
-	as AvailabilityStoreT,
-	bs KVStoreT,
-	ds DepositStoreT,
+	chainSpec common.ChainSpec,
+	availabilityStore AvailabilityStoreT,
+	stateStore KVStoreT,
+	depositStore DepositStoreT,
 ) *Backend[
 	AvailabilityStoreT, BeaconBlockBodyT, BeaconBlockHeaderT, BeaconStateT,
 	BeaconStateMarshallableT, BlobSidecarsT, DepositT, DepositStoreT, Eth1DataT,
@@ -109,10 +109,10 @@ func NewBackend[
 		ExecutionPayloadHeaderT, ForkT, KVStoreT, ValidatorT,
 		WithdrawalT, WithdrawalCredentialsT,
 	]{
-		cs: cs,
-		as: as,
-		bs: bs,
-		ds: ds,
+		chainSpec:         chainSpec,
+		availabilityStore: availabilityStore,
+		stateStore:        stateStore,
+		depositStore:      depositStore,
 	}
 }
 
@@ -123,7 +123,7 @@ func (k Backend[
 ]) AvailabilityStore(
 	_ context.Context,
 ) AvailabilityStoreT {
-	return k.as
+	return k.availabilityStore
 }
 
 // BeaconState returns the beacon state struct initialized with a given
@@ -138,7 +138,7 @@ func (k Backend[
 ) BeaconStateT {
 	var st BeaconStateT
 	return st.NewFromDB(
-		k.bs.WithContext(ctx), k.cs,
+		k.stateStore.WithContext(ctx), k.chainSpec,
 	)
 }
 
@@ -146,7 +146,7 @@ func (k Backend[
 func (k Backend[
 	_, _, _, _, _, _, _, _, _, _, _, KVStoreT, _, _, _,
 ]) BeaconStore() KVStoreT {
-	return k.bs
+	return k.stateStore
 }
 
 // DepositStore returns the deposit store struct initialized with a.
@@ -155,5 +155,5 @@ func (k Backend[
 ]) DepositStore(
 	_ context.Context,
 ) DepositStoreT {
-	return k.ds
+	return k.depositStore
 }
