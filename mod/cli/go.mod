@@ -25,6 +25,7 @@ require (
 	github.com/berachain/beacon-kit/mod/primitives v0.0.0-20240705193247-d464364483df
 	github.com/cometbft/cometbft v1.0.0-rc1.0.20240705183350-8b262bdd1d36
 	github.com/cosmos/cosmos-sdk v0.51.0
+	github.com/ethereum/go-ethereum v1.14.6
 	github.com/ferranbt/fastssz v0.1.4-0.20240422063434-a4db75388da1
 	github.com/spf13/afero v1.11.0
 	github.com/spf13/cobra v1.8.1
@@ -38,7 +39,6 @@ require (
 	github.com/bufbuild/protocompile v0.14.0 // indirect
 	github.com/cespare/cp v1.1.1 // indirect
 	github.com/cockroachdb/fifo v0.0.0-20240616162244-4768e80dfb9a // indirect
-	github.com/ethereum/go-ethereum v1.14.6 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/phuslu/log v1.0.108-0.20240705160716-a8f8c12ae6c6 // indirect
 	github.com/rs/zerolog v1.33.0 // indirect
@@ -73,7 +73,7 @@ require (
 	// indirect
 	github.com/berachain/beacon-kit/mod/beacon v0.0.0-20240705193247-d464364483df // indirect
 	github.com/berachain/beacon-kit/mod/da v0.0.0-20240705193247-d464364483df // indirect
-	github.com/berachain/beacon-kit/mod/execution v0.0.0-20240705193247-d464364483df // indirect
+	github.com/berachain/beacon-kit/mod/execution v0.0.0-20240705193247-d464364483df
 	github.com/berachain/beacon-kit/mod/p2p v0.0.0-20240618214413-d5ec0e66b3dd // indirect
 	github.com/berachain/beacon-kit/mod/payload v0.0.0-20240705193247-d464364483df // indirect
 	github.com/berachain/beacon-kit/mod/runtime v0.0.0-20240705193247-d464364483df // indirect
