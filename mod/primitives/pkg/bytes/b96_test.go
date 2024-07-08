@@ -26,9 +26,9 @@ import (
 	"testing"
 
 	"github.com/berachain/beacon-kit/mod/primitives/pkg/bytes"
+	"github.com/berachain/beacon-kit/mod/primitives/pkg/encoding/ssz"
+	"github.com/berachain/beacon-kit/mod/primitives/pkg/encoding/ssz/types"
 	"github.com/berachain/beacon-kit/mod/primitives/pkg/merkle/zero"
-	merkleizer "github.com/berachain/beacon-kit/mod/primitives/pkg/ssz/merkleizer"
-	"github.com/berachain/beacon-kit/mod/primitives/pkg/ssz/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -183,10 +183,14 @@ func TestB96HashTreeRoot(t *testing.T) {
 			root1, err1 := tt.input.HashTreeRoot()
 			require.NoError(t, err1)
 
-			merkleizer := merkleizer.New[[32]byte, bytes.B32]()
-			root2, err := merkleizer.MerkleizeByteSlice(tt.input[:])
+			root2, err := ssz.ByteVectorFromBytes(tt.input[:]).HashTreeRoot()
 			require.NoError(t, err)
-			require.Equal(t, root1, root2, "HashTreeRoot and HashTreeRoot2 should produce the same result")
+			require.Equal(
+				t,
+				root1,
+				root2,
+				"HashTreeRoot and HashTreeRoot2 should produce the same result",
+			)
 		})
 	}
 }
