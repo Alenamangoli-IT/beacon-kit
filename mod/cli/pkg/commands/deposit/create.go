@@ -21,17 +21,34 @@
 package deposit
 
 import (
-	"os"
-
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+	"crypto/ecdsa"
+	"math/big"
+	"net/url"
+	"os"
+	"time"
+
 	"github.com/berachain/beacon-kit/mod/cli/pkg/utils/parser"
+	"github.com/berachain/beacon-kit/mod/config"
+	"github.com/berachain/beacon-kit/mod/config/pkg/spec"
 	"github.com/berachain/beacon-kit/mod/consensus-types/pkg/types"
+	"github.com/berachain/beacon-kit/mod/errors"
+	engineclient "github.com/berachain/beacon-kit/mod/execution/pkg/client"
+	gethprimitives "github.com/berachain/beacon-kit/mod/geth-primitives"
+	"github.com/berachain/beacon-kit/mod/geth-primitives/pkg/deposit"
 	"github.com/berachain/beacon-kit/mod/node-core/pkg/components"
 	"github.com/berachain/beacon-kit/mod/node-core/pkg/components/signer"
 	"github.com/berachain/beacon-kit/mod/primitives/pkg/common"
 	"github.com/berachain/beacon-kit/mod/primitives/pkg/crypto"
+	"github.com/berachain/beacon-kit/mod/primitives/pkg/net/jwt"
+	myUrl "github.com/berachain/beacon-kit/mod/primitives/pkg/net/url"
 	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	gethCommon "github.com/ethereum/go-ethereum/common"
+	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	ethCrypto "github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/spf13/cobra"
 )
 
@@ -78,8 +95,31 @@ func createValidatorCmd(
 ) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		var (
-			logger = log.NewLogger(os.Stdout)
+			logger  = log.NewLogger(os.Stdout)
+			privKey *ecdsa.PrivateKey
 		)
+
+		broadcast, err := cmd.Flags().GetBool(broadcastDeposit)
+		if err != nil {
+			return err
+		}
+
+		// If the broadcast flag is set, a private key must be provided.
+		if broadcast {
+			var fundingPrivKey string
+			fundingPrivKey, err = cmd.Flags().GetString(privateKey)
+			if err != nil {
+				return err
+			}
+			if fundingPrivKey == "" {
+				return parser.ErrPrivateKeyRequired
+			}
+
+			privKey, err = ethCrypto.HexToECDSA(fundingPrivKey)
+			if err != nil {
+				return err
+			}
+		}
 
 		// Get the BLS signer.
 		blsSigner, err := getBLSSigner(cmd)
@@ -139,11 +179,270 @@ func createValidatorCmd(
 			"signature", signature.String(),
 		)
 
+		if broadcast {
+			var txHash gethCommon.Hash
+			txHash, err = broadcastDepositTx(
+				cmd, depositMsg, signature, privKey, logger, spec.DevnetChainSpec(),
+			)
+			if err != nil {
+				return err
+			}
+
+			logger.Info(
+				"Deposit transaction successful",
+				"txHash", txHash.Hex(),
+			)
+		}
+
 		// TODO: once broadcast is fixed, remove this.
 		logger.Info("Send the above calldata to the deposit contract 🫡")
 
 		return nil
 	}
+}
+
+func broadcastDepositTx(
+	cmd *cobra.Command,
+	depositMsg *types.DepositMessage,
+	signature crypto.BLSSignature,
+	privKey *ecdsa.PrivateKey,
+	logger log.Logger,
+	chainSpec common.ChainSpec,
+) (gethCommon.Hash, error) {
+	// Spin up an engine client to broadcast the deposit transaction.
+	// TODO: This should read in the actual config file. I'm going to rope
+	// if I keep trying this right now so it's a flag lol! 🥲
+	cfg := config.DefaultConfig()
+
+	// Parse the engine RPC URL.
+	engineRPCURL, err := cmd.Flags().GetString(engineRPCURL)
+	if err != nil {
+		return gethCommon.Hash{}, err
+	}
+
+	parsedURL, err := url.Parse(engineRPCURL)
+	if err != nil {
+		return gethCommon.Hash{}, err
+	}
+
+	cfg.Engine.RPCDialURL = convertURLToConnectionURL(parsedURL)
+	logger.Info("RPCDialURL", "url", cfg.Engine.RPCDialURL)
+
+	// Load the JWT secret.
+	cfg.Engine.JWTSecretPath, err = cmd.Flags().GetString(jwtSecretPath)
+	if err != nil {
+		return gethCommon.Hash{}, err
+	}
+
+	jwtSecret, err := loadFromFile(cfg.Engine.JWTSecretPath)
+	logger.Info("jwtSecret", "jwtSecret", jwtSecret)
+
+	if err != nil {
+		return gethCommon.Hash{}, errors.Wrapf(err, "error in loading jwt secret")
+	}
+
+	// TODO: This is a WIP. I'm not sure how to get the engine client to work
+	//config := &beaconClient.Config{}
+	//
+	//var telemetrySink beaconClient.TelemetrySink
+
+	// Spin up the engine client.
+	//engineClient := engineclient.New[ExecutionPayload, PayloadAttributes](config, logger, jwtSecret, telemetrySink, new(big.Int).SetUint64(chainSpec.DepositEth1ChainID()))
+	//engineClient := engineclient.New(
+	//	engineclient.WithEngineConfig(&cfg.Engine),
+	//	engineclient.WithJWTSecret(jwtSecret),
+	//	engineclient.WithLogger(logger),
+	//)
+
+	//engineClient, err := setupEngineClient(cfg.Engine.RPCDialURL, jwtSecret, chainSpec, logger)
+	//fmt.Println("engineClient", engineClient)
+	//err = engine ̰Client.Start(cmd.Context())
+	//if err != nil {
+	//	fmt.Println("err in starting engine client", err)
+	//}
+
+	engineClient, err := ethclient.Dial("http://localhost:8545")
+	if err != nil || engineClient == nil {
+		return gethCommon.Hash{}, errors.New("failed to create Ethereum client")
+	}
+
+	depositContractAddress := chainSpec.DepositContractAddress()
+	//depositContractAddressAfterConversion := gethCommon.HexToAddress(depositContractAddress.String())
+	//fmt.Println("DEPOSIT CONTRACT ADDRESS AFTER CONVERSION", depositContractAddressAfterConversion)
+
+	chainID, err := engineClient.ChainID(cmd.Context())
+	if err != nil {
+		return gethCommon.Hash{}, err
+	}
+
+	// one way
+	//contractAbi, err := deposit.BeaconDepositContractMetaData.GetAbi()
+	//if err != nil {
+	//	panic(err)
+	//}
+	//fmt.Println("CONTRACT ABI", contractAbi)
+	//
+	//callData, err := contractAbi.Pack(
+	//	"deposit",
+	//	depositMsg.Pubkey[:],
+	//	depositMsg.Credentials[:],
+	//	uint64(0),
+	//	signature[:],
+	//)
+	//fmt.Println("CALL DATA", callData)
+	//
+	//if err != nil {
+	//	fmt.Println("PANIC AT PACK")
+	//	panic(err)
+	//}
+	//
+	//tx := ethTypes.NewTx(
+	//	&ethTypes.DynamicFeeTx{
+	//		Nonce:     latestNonce,
+	//		ChainID:   chainID,
+	//		To:        &depositContractAddress,
+	//		Value:     depositMsg.Amount.ToWei(),
+	//		Data:      callData,
+	//		GasTipCap: big.NewInt(1000000000),
+	//		GasFeeCap: big.NewInt(1000000000),
+	//		Gas:       500000,
+	//	},
+	//)
+	//
+	// fmt.Println("TX", tx)
+	//
+	// signedTx, err := ethTypes.SignTx(tx, ethTypes.LatestSignerForChainID(chainID), privKey)
+	// fmt.Println("SIGNED TX", signedTx)
+	//
+	// if err != nil {
+	//	fmt.Errorf("error in signing tx: %v", err)
+	//}
+
+	////Now send this raw transaction through your RPC client
+	//_, err = engineClient.CallContract(
+	//	cmd.Context(),
+	//	ethereum.CallMsg{
+	//		From:  ethCrypto.PubkeyToAddress(privKey.PublicKey),
+	//		To:    &depositContractAddress,
+	//		Value: depositMsg.Amount.ToWei(),
+	//		Data:  signedTx.Data(),
+	//	},
+	//	big.NewInt(0),
+	//)
+	//
+	// fmt.Errorf("error in calling contract: %v", err)
+	//
+	// if err = engineClient.SendTransaction(
+	//	cmd.Context(),
+	//	signedTx,
+	//); err != nil {
+	//	fmt.Println("PANIC AT SEND TRANSACTION")
+	//	panic(err)
+	//}
+	//
+	// fmt.Println("CONTRACT CALLED")
+	// Getting same error using both approaches
+
+	// One approach to send deposit txn - is through go bindings
+	// Send the deposit to the deposit contract.
+
+	depositContract, err := deposit.NewBeaconDepositContract(
+		depositContractAddress,
+		engineClient,
+	)
+	if err != nil {
+		return gethCommon.Hash{}, err
+	}
+
+	logger.Info("from", "from", ethCrypto.PubkeyToAddress(privKey.PublicKey))
+	fromAddress := ethCrypto.PubkeyToAddress(privKey.PublicKey)
+
+	latestNonceForDeposit, errInNonce := engineClient.NonceAt(
+		cmd.Context(),
+		ethCrypto.PubkeyToAddress(privKey.PublicKey),
+		nil,
+	)
+	if errInNonce != nil {
+		return gethCommon.Hash{}, errInNonce
+	}
+	logger.Info("LATEST NONCE", "nonce", latestNonceForDeposit)
+
+	depositTx, err := depositContract.Deposit(
+		&bind.TransactOpts{
+			From: fromAddress,
+			Signer: func(
+				_ common.ExecutionAddress, tx *ethTypes.Transaction,
+			) (*ethTypes.Transaction, error) {
+				return ethTypes.SignTx(
+					tx, ethTypes.LatestSignerForChainID(chainID),
+					privKey,
+				)
+			},
+			Nonce:     new(big.Int).SetUint64(latestNonceForDeposit),
+			GasTipCap: big.NewInt(1000000000),
+			GasFeeCap: big.NewInt(1000000000),
+			GasLimit:  600000,
+		},
+		depositMsg.Pubkey[:],
+		depositMsg.Credentials[:],
+		uint64(depositMsg.Amount), // 32 eth is minimum deposit amount.
+		signature[:],
+	)
+	if err != nil {
+		return gethCommon.Hash{}, errors.Wrapf(err, "error in depositing")
+	}
+
+	time.Sleep(10 * time.Second)
+
+	// Wait for the transaction to be mined and check the status.
+	depositReceipt, err := bind.WaitMined(cmd.Context(), engineClient, depositTx)
+	if err != nil {
+		return gethCommon.Hash{}, errors.Wrapf(err, "waiting for transaction to be mined")
+	}
+
+	if depositReceipt.Status != 1 {
+		return gethCommon.Hash{}, parser.ErrDepositTransactionFailed
+	}
+
+	return depositReceipt.TxHash, nil
+}
+
+func loadFromFile(path string) (*jwt.Secret, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return jwt.NewFromHex(string(data))
+}
+
+type ExecutionPayload struct {
+	types.InnerExecutionPayload
+}
+
+func (ep ExecutionPayload) Empty(_ uint32) ExecutionPayload {
+	return ExecutionPayload{}
+}
+
+type PayloadAttributes struct {
+}
+
+func (p PayloadAttributes) IsNil() bool {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (p PayloadAttributes) GetSuggestedFeeRecipient() gethprimitives.ExecutionAddress {
+	//TODO implement me
+	panic("implement me")
+}
+
+func setupEngineClient(rpcUrl *myUrl.ConnectionURL, secret *jwt.Secret, chainSpec common.ChainSpec, logger log.Logger) (*engineclient.EngineClient[ExecutionPayload, PayloadAttributes], error) {
+	cfg := &engineclient.Config{RPCDialURL: rpcUrl}
+	var telemetrySink engineclient.TelemetrySink
+	eth1ChainID := new(big.Int).SetUint64(chainSpec.DepositEth1ChainID())
+	engineClient := engineclient.New[ExecutionPayload, PayloadAttributes](cfg, logger, secret, telemetrySink, eth1ChainID)
+	return engineClient, nil
 }
 
 // getBLSSigner returns a BLS signer based on the override commands key flag.
@@ -190,4 +489,10 @@ func getBLSSigner(
 	}
 
 	return blsSigner, nil
+}
+
+func convertURLToConnectionURL(u *url.URL) *myUrl.ConnectionURL {
+	return &myUrl.ConnectionURL{
+		URL: u,
+	}
 }
